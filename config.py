@@ -2,6 +2,9 @@
 import os
 from dotenv import load_dotenv
 
+# Version
+VERSION = "0.1.0"
+
 # Load environment variables
 load_dotenv()
 

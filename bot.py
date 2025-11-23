@@ -4,9 +4,10 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-from config import BOT_TOKEN, VOICE_FOLDER
-from audio_processing import load_audio, detect_metronome, extract_pitch, identify_notes, segment_notes
+from config import BOT_TOKEN, VOICE_FOLDER, VERSION
+from audio_processing import load_audio, detect_metronome, extract_pitch, identify_notes, segment_notes, calculate_timing_accuracy
 from visualization import visualize_metronome_detection, visualize_pitch_and_notes
+from video_generation import generate_video_report
 
 # Create voice_messages folder if it doesn't exist
 os.makedirs(VOICE_FOLDER, exist_ok=True)
@@ -171,11 +172,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message)
     print(f"Segmentation: {segment_result['num_notes']} notes from {segment_result['num_onsets']} onsets")
     
+    # Calculate timing accuracy
+    timing_result = calculate_timing_accuracy(segment_result['notes'], metronome_result['beat_times'])
+    
+    if timing_result['success']:
+        message = (
+            f"⏱️ Timing Analysis:\n"
+            f"Average timing error: {timing_result['avg_timing_error']:.1f} ms\n"
+            f"Notes on beat (±50ms): {timing_result['on_beat_percentage']:.1f}%\n"
+            f"✅ Timing analysis complete!"
+        )
+        await update.message.reply_text(message)
+        print(f"Timing: {timing_result['avg_timing_error']:.1f}ms error, {timing_result['on_beat_percentage']:.1f}% on beat")
+    
     # Create comprehensive pitch visualization
     await update.message.reply_text("📊 Generating pitch analysis visualization...")
     viz_result = visualize_pitch_and_notes(
         segment_result['df'],
-        segment_result['notes'],
+        timing_result['notes_with_timing'] if timing_result['success'] else segment_result['notes'],
         metronome_result['beat_times'],
         filepath
     )
@@ -194,6 +208,35 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="Comprehensive pitch analysis: frequency tracking, detected notes with tuning accuracy, and timing"
         )
     print(f"Pitch visualization sent: {viz_result['plot_path']}")
+    
+    # Iteration 8: Generate video report
+    await update.message.reply_text("🎬 Generating video report (this may take a minute)...")
+    video_output = filepath.replace('.ogg', '_report.mp4')
+    
+    video_result = generate_video_report(
+        segment_result['df'],
+        segment_result['notes'],
+        metronome_result['beat_times'],
+        filepath,
+        video_output
+    )
+    
+    if not video_result['success']:
+        await update.message.reply_text(
+            f"❌ Error generating video: {video_result['error']}"
+        )
+        print(f"Video generation error: {video_result['error']}")
+        return
+    
+    # Send video report
+    await update.message.reply_text("📤 Uploading video report...")
+    with open(video_result['video_path'], 'rb') as video:
+        await update.message.reply_video(
+            video=video,
+            caption=f"Practice Analysis Report ({video_result['duration']:.1f}s)",
+            supports_streaming=True
+        )
+    print(f"Video report sent: {video_result['video_path']}")
 
 
 def main():
@@ -204,7 +247,7 @@ def main():
     # Add handler for voice messages
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     
-    print("🤖 Practice Buddy Bot is running... Press Ctrl+C to stop")
+    print(f"🤖 Practice Buddy Bot v{VERSION} is running... Press Ctrl+C to stop")
     
     # Start the bot
     app.run_polling(allowed_updates=Update.ALL_TYPES)

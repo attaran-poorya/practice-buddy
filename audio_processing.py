@@ -340,3 +340,54 @@ def segment_notes(df, y, sr):
             'success': False,
             'error': str(e)
         }
+
+
+def calculate_timing_accuracy(notes_df, beat_times):
+    """Calculate how close each note onset is to the nearest metronome beat"""
+    try:
+        import pandas as pd
+        
+        if len(beat_times) == 0 or len(notes_df) == 0:
+            return {
+                'success': True,
+                'notes_with_timing': notes_df,
+                'avg_timing_error': 0,
+                'on_beat_percentage': 0
+            }
+        
+        # For each note, find nearest beat
+        timing_errors = []
+        
+        for idx, note in notes_df.iterrows():
+            note_start = note['start_time']
+            
+            # Find closest beat
+            time_diffs = np.abs(beat_times - note_start)
+            closest_beat_idx = np.argmin(time_diffs)
+            closest_beat_time = beat_times[closest_beat_idx]
+            
+            # Calculate error in milliseconds
+            timing_error_ms = (note_start - closest_beat_time) * 1000
+            timing_errors.append(timing_error_ms)
+        
+        notes_df['timing_error_ms'] = timing_errors
+        notes_df['abs_timing_error_ms'] = np.abs(timing_errors)
+        
+        # Calculate statistics
+        avg_timing_error = np.mean(np.abs(timing_errors))
+        
+        # Define "on beat" as within 50ms of a beat
+        on_beat_count = np.sum(np.abs(timing_errors) <= 50)
+        on_beat_percentage = (on_beat_count / len(timing_errors)) * 100 if len(timing_errors) > 0 else 0
+        
+        return {
+            'success': True,
+            'notes_with_timing': notes_df,
+            'avg_timing_error': avg_timing_error,
+            'on_beat_percentage': on_beat_percentage
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
