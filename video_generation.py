@@ -147,12 +147,26 @@ def generate_video_report(df, notes_df, beat_times, audio_path, output_path):
     try:
         from moviepy.editor import VideoClip, AudioFileClip
         import librosa
+        import signal as sig
+        
+        # Timeout handler
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Video generation timeout (5 minutes)")
+        
+        # Set 5 minute timeout
+        sig.signal(sig.SIGALRM, timeout_handler)
+        sig.alarm(300)  # 5 minutes
         
         print("Starting video generation...")
         
         # Load audio duration
         audio_duration = librosa.get_duration(path=audio_path)
         print(f"Audio duration: {audio_duration:.2f}s")
+        
+        # Limit video generation to max 2 minutes of audio
+        if audio_duration > 120:
+            print(f"Warning: Audio is {audio_duration:.1f}s, truncating video to 120s")
+            audio_duration = 120
         
         # Test create first frame to catch errors early
         print("Creating test frame...")
@@ -182,6 +196,7 @@ def generate_video_report(df, notes_df, beat_times, audio_path, output_path):
         
         print("Loading audio...")
         audio = AudioFileClip(audio_path)
+        audio = audio.subclip(0, audio_duration)  # Match video duration
         final_video = video.set_audio(audio)
         
         print(f"Writing video to {output_path}...")
@@ -190,13 +205,17 @@ def generate_video_report(df, notes_df, beat_times, audio_path, output_path):
             fps=10,
             codec='libx264',
             audio_codec='aac',
-            bitrate='2000k',
-            preset='ultrafast',  # Faster encoding
+            bitrate='1500k',  # Reduced from 2000k for smaller file
+            preset='faster',  # Balance between speed and compression
             temp_audiofile='temp-audio.m4a',
             remove_temp=True,
             verbose=False,
-            logger=None
+            logger=None,
+            threads=2  # Limit threads to avoid memory issues
         )
+        
+        # Cancel alarm
+        sig.alarm(0)
         
         print("✓ Video generation complete!")
         
@@ -211,6 +230,12 @@ def generate_video_report(df, notes_df, beat_times, audio_path, output_path):
             'duration': audio_duration
         }
         
+    except TimeoutError as e:
+        print(f"❌ Video generation timed out: {e}")
+        return {
+            'success': False,
+            'error': 'Video generation timeout (>5 minutes). Try with shorter recordings (<60s).'
+        }
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
