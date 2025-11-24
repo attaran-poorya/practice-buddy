@@ -77,10 +77,10 @@ def visualize_metronome_detection(y, sr, beat_times, filepath):
 def visualize_pitch_and_notes(df, notes_df, beat_times, filepath):
     """Create comprehensive visualization with pitch, notes, and timing"""
     try:
-        # Create figure with 3 subplots
-        fig, (ax1, ax2, ax3) = plt.subplots(
-            3, 1,
-            figsize=(VIZ_PARAMS['figure_width'], VIZ_PARAMS['figure_height'] + 4)
+        # Create figure with 4 subplots (added timing accuracy plot)
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(
+            4, 1,
+            figsize=(VIZ_PARAMS['figure_width'], VIZ_PARAMS['figure_height'] + 6)
         )
         
         # Plot 1: Pitch over time with note labels
@@ -186,6 +186,52 @@ def visualize_pitch_and_notes(df, notes_df, beat_times, filepath):
         ax3.set_title('Tuning Accuracy Over Time', fontsize=13, fontweight='bold')
         ax3.grid(True, alpha=0.3)
         ax3.set_ylim(-50, 50)
+        
+        # Plot 4: TIMING ACCURACY - New in Iteration 8
+        ax4.set_xlabel('Time (seconds)', fontsize=11)
+        ax4.set_ylabel('Timing Error (ms)', fontsize=11)
+        ax4.set_title('Timing Accuracy Relative to Metronome', fontsize=13, fontweight='bold')
+        ax4.grid(True, alpha=0.3)
+        
+        # Add metronome beats as vertical lines
+        for beat_time in beat_times:
+            ax4.axvline(x=beat_time, color='red', linestyle=':', linewidth=1.5, alpha=0.5, label='Metronome Beat' if beat_time == beat_times[0] else '')
+        
+        # Plot timing error for each note
+        if 'timing_error_ms' in notes_df.columns:
+            # Scatter plot for each note's timing error
+            colors = []
+            for error in notes_df['abs_timing_error_ms']:
+                if error <= 30:
+                    colors.append('green')
+                elif error <= 50:
+                    colors.append('yellow')
+                else:
+                    colors.append('red')
+            
+            ax4.scatter(notes_df['start_time'], notes_df['timing_error_ms'], 
+                       c=colors, s=100, alpha=0.7, edgecolors='black', linewidth=0.5,
+                       label='Note Onset')
+            
+            # Zero line (perfect timing)
+            ax4.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
+            
+            # Reference lines for acceptable timing
+            ax4.axhline(y=50, color='orange', linestyle='--', linewidth=0.8, alpha=0.5)
+            ax4.axhline(y=-50, color='orange', linestyle='--', linewidth=0.8, alpha=0.5)
+            ax4.axhline(y=30, color='green', linestyle='--', linewidth=0.8, alpha=0.5)
+            ax4.axhline(y=-30, color='green', linestyle='--', linewidth=0.8, alpha=0.5)
+            
+            # Add text annotations for significantly off-beat notes
+            for _, note in notes_df.iterrows():
+                if note['abs_timing_error_ms'] > 80:
+                    ax4.annotate(f"{note['timing_error_ms']:.0f}ms", 
+                               (note['start_time'], note['timing_error_ms']),
+                               textcoords="offset points", xytext=(0,10), ha='center',
+                               fontsize=8, color='red', fontweight='bold')
+        
+        ax4.set_ylim(-150, 150)
+        ax4.legend(loc='upper right', fontsize=9)
         
         plt.tight_layout()
         

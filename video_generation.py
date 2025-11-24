@@ -8,131 +8,65 @@ from config import VIZ_PARAMS
 
 
 def create_video_frame(df, notes_df, current_time, audio_duration):
-    """Create a single frame for the video at a specific timestamp"""
+    """Create a single frame - simplified with progressive line drawing"""
     try:
-        fig, (ax1, ax2, ax3) = plt.subplots(
-            3, 1,
-            figsize=(12, 10),
-            dpi=80
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1,
+            figsize=(12, 8),
+            dpi=60  # Lower DPI for faster rendering
         )
         
-        # Define window size (show 10 seconds of data at a time)
-        window_size = 10
-        time_start = max(0, current_time - window_size / 2)
-        time_end = min(audio_duration, current_time + window_size / 2)
+        # Filter data up to current time
+        mask = df['time_s'] <= current_time
+        df_current = df[mask]
         
-        # Filter data for current window
-        mask = (df['time_s'] >= time_start) & (df['time_s'] <= time_end)
-        df_window = df[mask]
-        
-        # Plot 1: Pitch tracking
-        if len(df_window) > 0:
-            ax1.plot(df_window['time_s'], df_window['f0'], color='blue', linewidth=2, alpha=0.7, label='Detected')
-            ax1.plot(df_window['time_s'], df_window['ideal_freq'], color='gray', linewidth=1, linestyle='--', alpha=0.5, label='Ideal')
-        
-        # Current time marker
-        ax1.axvline(x=current_time, color='red', linestyle='-', linewidth=3, alpha=0.8)
-        ax1.set_xlim(time_start, time_end)
+        # Plot 1: Pitch tracking (draw full axes, progressive line)
+        ax1.set_xlim(0, audio_duration)
+        ax1.set_ylim(df['f0'].min() * 0.95, df['f0'].max() * 1.05)
         ax1.set_xlabel('Time (seconds)', fontsize=11)
         ax1.set_ylabel('Frequency (Hz)', fontsize=11)
-        ax1.set_title(f'Pitch - Time: {current_time:.1f}s / {audio_duration:.1f}s', fontsize=13, fontweight='bold')
+        ax1.set_title(f'Pitch - {current_time:.1f}s / {audio_duration:.1f}s', fontsize=13, fontweight='bold')
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper right', fontsize=9)
         
-        # Plot 2: Note segments
+        # Draw pitch line up to current time only
+        if len(df_current) > 0:
+            ax1.plot(df_current['time_s'], df_current['f0'], color='blue', linewidth=2)
+            ax1.plot(df_current['time_s'], df_current['ideal_freq'], color='gray', linewidth=1, linestyle='--', alpha=0.5)
+        
+        # Current position marker
+        ax1.axvline(x=current_time, color='red', linestyle='-', linewidth=2, alpha=0.8)
+        
+        # Plot 2: Cents deviation (draw full axes, progressive line)
+        ax2.set_xlim(0, audio_duration)
+        ax2.set_ylim(-50, 50)
         ax2.set_xlabel('Time (seconds)', fontsize=11)
-        ax2.set_ylabel('Note', fontsize=11)
-        ax2.set_title('Notes (Green=In Tune, Yellow=Slightly Off, Red=Out of Tune)', fontsize=13, fontweight='bold')
-        ax2.grid(True, alpha=0.3, axis='x')
+        ax2.set_ylabel('Cents Deviation', fontsize=11)
+        ax2.set_title('Tuning Accuracy', fontsize=13, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
         
-        # Filter notes in current window
-        notes_window = notes_df[
-            ((notes_df['start_time'] >= time_start) & (notes_df['start_time'] <= time_end)) |
-            ((notes_df['end_time'] >= time_start) & (notes_df['end_time'] <= time_end)) |
-            ((notes_df['start_time'] <= time_start) & (notes_df['end_time'] >= time_end))
-        ]
+        # Reference lines (static, full width)
+        ax2.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
+        ax2.axhline(y=10, color='green', linestyle='--', linewidth=1, alpha=0.5)
+        ax2.axhline(y=-10, color='green', linestyle='--', linewidth=1, alpha=0.5)
+        ax2.axhline(y=25, color='orange', linestyle='--', linewidth=1, alpha=0.5)
+        ax2.axhline(y=-25, color='orange', linestyle='--', linewidth=1, alpha=0.5)
         
-        if len(notes_window) > 0:
-            unique_notes = notes_window['note_name'].unique()
-            note_to_y = {note: i for i, note in enumerate(unique_notes)}
-            
-            for _, note in notes_window.iterrows():
-                y_position = note_to_y[note['note_name']]
-                abs_cents = abs(note['avg_cents_off'])
-                
-                # Color based on tuning
-                if abs_cents <= 10:
-                    color = 'green'
-                elif abs_cents <= 25:
-                    color = 'yellow'
-                else:
-                    color = 'red'
-                
-                # Highlight current note being played
-                is_current = note['start_time'] <= current_time <= note['end_time']
-                alpha = 0.95 if is_current else 0.6
-                linewidth = 3 if is_current else 0.5
-                
-                rect = Rectangle(
-                    (note['start_time'], y_position - 0.4),
-                    note['duration'],
-                    0.8,
-                    facecolor=color,
-                    alpha=alpha,
-                    edgecolor='black',
-                    linewidth=linewidth
-                )
-                ax2.add_patch(rect)
-                
-                # Add note label
-                if note['duration'] > 0.3:
-                    ax2.text(
-                        note['start_time'] + note['duration']/2,
-                        y_position,
-                        note['note_name'],
-                        ha='center',
-                        va='center',
-                        fontsize=9,
-                        fontweight='bold'
-                    )
-            
-            ax2.set_yticks(range(len(unique_notes)))
-            ax2.set_yticklabels(unique_notes)
-            ax2.set_ylim(-0.5, len(unique_notes) - 0.5)
+        # Draw cents line up to current time only
+        if len(df_current) > 0:
+            ax2.plot(df_current['time_s'], df_current['cents_off'], color='purple', linewidth=2)
         
-        # Current time marker
-        ax2.axvline(x=current_time, color='red', linestyle='-', linewidth=3, alpha=0.8)
-        ax2.set_xlim(time_start, time_end)
-        
-        # Plot 3: Cents deviation
-        if len(df_window) > 0:
-            ax3.plot(df_window['time_s'], df_window['cents_off'], color='purple', linewidth=2, alpha=0.7)
-        
-        ax3.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
-        ax3.axhline(y=10, color='green', linestyle='--', linewidth=1, alpha=0.5)
-        ax3.axhline(y=-10, color='green', linestyle='--', linewidth=1, alpha=0.5)
-        ax3.axhline(y=25, color='orange', linestyle='--', linewidth=1, alpha=0.5)
-        ax3.axhline(y=-25, color='orange', linestyle='--', linewidth=1, alpha=0.5)
-        ax3.axvline(x=current_time, color='red', linestyle='-', linewidth=3, alpha=0.8)
-        
-        ax3.set_xlim(time_start, time_end)
-        ax3.set_ylim(-50, 50)
-        ax3.set_xlabel('Time (seconds)', fontsize=11)
-        ax3.set_ylabel('Cents Deviation', fontsize=11)
-        ax3.set_title('Tuning Accuracy (0 = Perfect Pitch)', fontsize=13, fontweight='bold')
-        ax3.grid(True, alpha=0.3)
+        # Current position marker
+        ax2.axvline(x=current_time, color='red', linestyle='-', linewidth=2, alpha=0.8)
         
         plt.tight_layout()
         
-        # Convert figure to numpy array (FIX: use tobytes instead of tostring_rgb)
+        # Convert to image
         fig.canvas.draw()
         buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
         w, h = fig.canvas.get_width_height()
-        img = buf.reshape((h, w, 4))  # RGBA format
-        img = img[:, :, :3]  # Convert to RGB by dropping alpha channel
+        img = buf.reshape((h, w, 4))[:, :, :3]  # Drop alpha
         
         plt.close(fig)
-        
         return img
         
     except Exception as e:
