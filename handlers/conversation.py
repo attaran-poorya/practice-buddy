@@ -1,9 +1,12 @@
 """Conversation handler for Practice Buddy Bot"""
+import logging
 from enum import IntEnum
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 import messages as msg
+
+logger = logging.getLogger(__name__)
 
 
 class State(IntEnum):
@@ -15,6 +18,7 @@ class State(IntEnum):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
+    logger.info("User started bot")
     keyboard = [
         [InlineKeyboardButton(msg.BTN_NEW_PRACTICE, callback_data='new_practice')],
         [InlineKeyboardButton(msg.BTN_HELP, callback_data='help')]
@@ -26,16 +30,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
+    logger.info("User requested help")
     await update.message.reply_text(msg.HELP)
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /cancel command"""
-    # Clear conversation data
+    logger.info("User cancelled conversation")
     context.user_data.clear()
-    
     await update.message.reply_text(msg.CONVERSATION_CANCELLED)
-    return -1  # End conversation
+    return -1
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -43,15 +47,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    logger.info(f"Button pressed: {query.data}")
+    
     if query.data == 'new_practice':
         return await ask_instrument(update, context, query=query)
     
     elif query.data == 'help':
         await query.edit_message_text(msg.HELP)
-        return -1  # End conversation
+        return -1
     
     elif query.data == 'violin':
         context.user_data['instrument'] = 'ویولن'
+        logger.info("Instrument selected: ویولن")
         await query.edit_message_text(msg.ASK_PIECE_NAME)
         return State.PIECE_NAME
     
@@ -67,7 +74,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'cancel':
         await query.edit_message_text(msg.CONVERSATION_CANCELLED)
         context.user_data.clear()
-        return -1  # End conversation
+        return -1
 
 
 async def ask_instrument(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
@@ -90,6 +97,7 @@ async def receive_piece_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Receive and store piece name"""
     piece_name = update.message.text
     context.user_data['piece_name'] = piece_name
+    logger.info(f"Piece name received: {piece_name}")
     
     await update.message.reply_text(msg.ASK_AUDIO)
     
@@ -97,27 +105,26 @@ async def receive_piece_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def receive_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle audio file - store context and pass to main handler"""
-    # Store context for later use
+    """Handle audio file - store context and trigger analysis"""
     instrument = context.user_data.get('instrument', 'نامشخص')
     piece_name = context.user_data.get('piece_name', 'نامشخص')
     
-    # Store in context for the analysis handler
     context.user_data['analysis_context'] = {
         'instrument': instrument,
         'piece_name': piece_name
     }
     
-    # Important: Mark that we're in analysis mode
-    context.user_data['in_conversation'] = True
+    logger.info(f"Audio received - Instrument: {instrument}, Piece: {piece_name}")
     
-    # Don't send "file received" here - let the main handler do it
-    # The main handler will be called automatically after this returns
+    # Import and call analysis directly
+    from handlers.analysis import handle_voice
+    await handle_voice(update, context)
     
-    return -1  # End conversation, let main handler take over
+    return -1
 
 
 async def invalid_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle invalid input during conversation"""
+    logger.warning("Invalid input received")
     await update.message.reply_text(msg.ERROR_NO_AUDIO)
     return State.WAITING_AUDIO
