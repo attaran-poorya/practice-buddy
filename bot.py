@@ -37,10 +37,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming voice messages with analysis"""
     voice = update.message.voice
     
+    # Skip if we're in conversation mode (it will be handled by conversation handler)
+    if context.user_data.get('in_conversation'):
+        context.user_data.pop('in_conversation')  # Clear flag
+        # Now proceed with analysis
+    
     # Get context from conversation if available
     analysis_context = context.user_data.get('analysis_context', {})
     instrument = analysis_context.get('instrument', 'نامشخص')
     piece_name = analysis_context.get('piece_name', 'نامشخص')
+    
+    print(f"=== STARTING ANALYSIS ===")
+    print(f"Instrument: {instrument}, Piece: {piece_name}")
     
     # Get the file
     file = await context.bot.get_file(voice.file_id)
@@ -51,32 +59,40 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filepath = os.path.join(VOICE_FOLDER, filename)
     
     # Download the file
+    print(f"Downloading file to {filepath}...")
     await file.download_to_drive(filepath)
-    print(f"Downloaded: {filename}")
-    print(f"Context: {instrument} - {piece_name}")
+    print(f"✓ Downloaded: {filename}")
+    
+    # Send "file received" message
+    await update.message.reply_text(msg.FILE_RECEIVED)
     
     # Load and analyze audio
+    print("Loading audio...")
     await update.message.reply_text(msg.ANALYZING_AUDIO)
     result = load_audio(filepath)
+    print(f"Audio loaded: {result.get('success')}")
     
     if not result['success']:
+        print(f"ERROR: Audio load failed - {result['error']}")
         await update.message.reply_text(f"❌ {msg.ERROR_ANALYSIS_FAILED}\n{result['error']}")
-        print(f"Error: {result['error']}")
         return
+    
+    print(f"✓ Audio: {result['duration']:.2f}s, {result['sample_rate']}Hz")
     
     # Send basic analysis results
     message = (
-        f"📊 {msg.ANALYZING_AUDIO}\n"
+        f"📊 تحلیل صوتی\n"
         f"مدت: {result['duration']:.2f} ثانیه\n"
         f"نرخ نمونه‌برداری: {result['sample_rate']} Hz\n"
         f"✅ فایل صوتی بارگذاری شد"
     )
     await update.message.reply_text(message)
-    print(f"Analysis complete: {result['duration']:.2f}s at {result['sample_rate']}Hz")
     
     # Detect metronome
+    print("Detecting metronome...")
     await update.message.reply_text(msg.DETECTING_METRONOME)
     metronome_result = detect_metronome(result['y'], result['sr'])
+    print(f"Metronome detected: {metronome_result.get('success')}")
     
     if not metronome_result['success']:
         await update.message.reply_text(f"❌ خطا در تشخیص مترونوم: {metronome_result['error']}")

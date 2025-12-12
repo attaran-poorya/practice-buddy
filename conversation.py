@@ -97,7 +97,7 @@ async def receive_piece_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def receive_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle audio file - this will be integrated with existing analysis"""
+    """Handle audio file - store context and pass to main handler"""
     # Store context for later use
     instrument = context.user_data.get('instrument', 'نامشخص')
     piece_name = context.user_data.get('piece_name', 'نامشخص')
@@ -108,10 +108,12 @@ async def receive_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'piece_name': piece_name
     }
     
-    await update.message.reply_text(msg.FILE_RECEIVED)
+    # Important: Mark that we're in analysis mode
+    context.user_data['in_conversation'] = True
     
-    # The actual analysis will be handled by the main voice handler
-    # We'll integrate this in bot.py
+    # Don't send "file received" here - let the main handler do it
+    # The main handler will be called automatically after this returns
+    
     return -1  # End conversation, let main handler take over
 
 
