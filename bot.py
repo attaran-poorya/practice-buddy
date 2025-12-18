@@ -21,7 +21,7 @@ from handlers.conversation import (
     receive_audio,
     invalid_input
 )
-from handlers.analysis import handle_voice, handle_report_callback
+from handlers.analysis import handle_voice, handle_analysis_choice
 
 # Configure logging
 logging.basicConfig(
@@ -69,7 +69,7 @@ def main():
     # Add all handlers
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CallbackQueryHandler(handle_report_callback, pattern='^(full_report|skip_report)$'))
+    app.add_handler(CallbackQueryHandler(handle_analysis_choice, pattern='^(full_analysis|skip_analysis)$'))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     

@@ -83,3 +83,24 @@ BTN_VIOLIN = "🎻 ویولن"
 BTN_CUSTOM_INSTRUMENT = "➕ ساز دیگری"
 BTN_YES_VIOLIN = "✅ بله، ویولن"
 BTN_CANCEL = "❌ انصراف"
+BTN_FULL_ANALYSIS = "📊 تحلیل کامل"
+BTN_SKIP_ANALYSIS = "⏭️ رد شدن"
+
+# Quick analysis messages
+METRONOME_DETECTED = "✅ مترونوم تشخیص داده شد"
+METRONOME_NOT_DETECTED = "❌ مترونوم تشخیص داده نشد"
+
+QUICK_ANALYSIS_RESULT = """📋 نتیجه تحلیل اولیه
+
+🎻 ساز: {instrument}
+🎼 قطعه: {piece_name}
+⏱️ مدت: {duration:.1f} ثانیه
+
+{metronome_status}
+🥁 تعداد ضربات: {num_beats}
+🎯 تمپو: {tempo:.1f} BPM
+
+آیا می‌خوای تحلیل کامل انجام بدم؟"""
+
+ANALYSIS_CANCELLED = "✅ متوجه شدم. هر وقت خواستی تمرین جدید بفرست!"
+STARTING_FULL_ANALYSIS = "🔄 شروع تحلیل کامل..."
