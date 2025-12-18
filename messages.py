@@ -68,6 +68,14 @@ ERROR_NO_AUDIO = "لطفاً یک فایل صوتی یا ویس بفرست."
 ERROR_ANALYSIS_FAILED = "متأسفانه در تحلیل مشکلی پیش اومد. لطفاً دوباره امتحان کن."
 CONVERSATION_CANCELLED = "عملیات لغو شد. برای شروع مجدد /start رو بزن."
 
+# Feedback
+FEEDBACK_PROMPT = """
+✅ تحلیل تمرین تموم شد!
+
+اگر مشکلی داشتی یا پیشنهادی داری، لطفاً به من بگو.
+با /start می‌تونی تمرین جدید بفرستی.
+"""
+
 # Button labels
 BTN_NEW_PRACTICE = "🎵 ارسال تمرین جدید"
 BTN_HELP = "📚 راهنما"

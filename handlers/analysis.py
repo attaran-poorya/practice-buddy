@@ -3,20 +3,11 @@ import os
 import logging
 from datetime import datetime
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from config import VOICE_FOLDER
-from audio_processing import (
-    load_audio, 
-    detect_metronome, 
-    extract_pitch, 
-    identify_notes, 
-    segment_notes, 
-    calculate_timing_accuracy
-)
-from visualization import visualize_metronome_detection, visualize_pitch_and_notes
-from video_generation import generate_video_report
+from audio_processing import load_audio, detect_metronome
 import messages as msg
 from utils.rate_limiter import rate_limiter
 from utils.usage_tracker import log_user_action, log_analysis_complete, log_error
@@ -25,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming voice messages - main entry point"""
+    """Handle incoming voice messages - perform quick analysis first"""
     
     user = update.effective_user
     user_id = user.id
@@ -46,7 +37,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     instrument = analysis_context.get('instrument', 'نامشخص')
     piece_name = analysis_context.get('piece_name', 'نامشخص')
     
-    logger.info(f"=== ANALYSIS START ===")
+    logger.info(f"=== QUICK ANALYSIS START ===")
     logger.info(f"User: {username} ({user_id})")
     logger.info(f"Instrument: {instrument}, Piece: {piece_name}")
     
@@ -64,20 +55,284 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg.FILE_RECEIVED)
     
-    # Run analysis pipeline
+    # Run quick analysis
     try:
-        await analyze_audio(update, filepath, instrument, piece_name, user_id, username)
+        await quick_analysis(update, context, filepath, instrument, piece_name, user_id, username)
     except Exception as e:
-        logger.error(f"Analysis failed: {e}", exc_info=True)
+        logger.error(f"Quick analysis failed: {e}", exc_info=True)
         log_error(user_id, username, str(e))
         await update.message.reply_text(f"❌ {msg.ERROR_ANALYSIS_FAILED}")
-    finally:
-        # Clear conversation context
         context.user_data.clear()
 
 
-async def analyze_audio(update: Update, filepath: str, instrument: str, piece_name: str, user_id: int, username: str):
-    """Run the full analysis pipeline"""
+async def quick_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE, filepath: str, 
+                        instrument: str, piece_name: str, user_id: int, username: str):
+    """Perform quick basic analysis - check audio quality and metronome"""
+    
+    # Step 1: Load audio
+    logger.info("Quick check: Loading audio...")
+    result = load_audio(filepath)
+    
+    if not result['success']:
+        logger.error(f"Audio load failed: {result['error']}")
+        await update.message.reply_text(f"❌ {msg.ERROR_ANALYSIS_FAILED}\n{result['error']}")
+        return
+    
+    duration = result['duration']
+    logger.info(f"✓ Audio loaded: {duration:.2f}s")
+    
+    # Step 2: Quick metronome check
+    logger.info("Quick check: Detecting metronome...")
+    metronome_result = detect_metronome(result['y'], result['sr'])
+    
+    if not metronome_result['success']:
+        logger.error(f"Metronome detection failed: {metronome_result['error']}")
+        await update.message.reply_text(f"❌ خطا در تشخیص مترونوم: {metronome_result['error']}")
+        return
+    
+    num_beats = metronome_result['num_beats']
+    tempo = metronome_result['tempo']
+    metronome_detected = num_beats > 0
+    
+    logger.info(f"✓ Metronome check: {num_beats} beats @ {tempo:.1f} BPM")
+    
+    # Store data for potential full analysis
+    context.user_data['quick_analysis_data'] = {
+        'filepath': filepath,
+        'instrument': instrument,
+        'piece_name': piece_name,
+        'audio_result': result,
+        'metronome_result': metronome_result,
+        'user_id': user_id,
+        'username': username
+    }
+    
+    # Send results with action buttons
+    metronome_status = msg.METRONOME_DETECTED if metronome_detected else msg.METRONOME_NOT_DETECTED
+    
+    result_message = msg.QUICK_ANALYSIS_RESULT.format(
+        instrument=instrument,
+        piece_name=piece_name,
+        duration=duration,
+        metronome_status=metronome_status,
+        num_beats=num_beats,
+        tempo=tempo
+    )
+    
+    # Add buttons for user choice
+    keyboard = [
+        [InlineKeyboardButton(msg.BTN_FULL_ANALYSIS, callback_data='full_analysis')],
+        [InlineKeyboardButton(msg.BTN_SKIP_ANALYSIS, callback_data='skip_analysis')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(result_message, reply_markup=reply_markup)
+    
+    # Log quick analysis complete
+    log_user_action(user_id, username, "quick_analysis_complete", {
+        'duration': duration,
+        'num_beats': num_beats,
+        'tempo': tempo,
+        'metronome_detected': metronome_detected
+    })
+    
+    logger.info("=== QUICK ANALYSIS COMPLETE ===")
+
+
+async def handle_analysis_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle user's choice to run full analysis or skip"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == 'skip_analysis':
+        logger.info("User skipped full analysis")
+        await query.edit_message_text(msg.ANALYSIS_CANCELLED)
+        context.user_data.clear()
+        return
+    
+    elif query.data == 'full_analysis':
+        logger.info("User requested full analysis")
+        await query.edit_message_text(msg.STARTING_FULL_ANALYSIS)
+        
+        # Get stored data
+        quick_data = context.user_data.get('quick_analysis_data')
+        if not quick_data:
+            await query.message.reply_text("❌ خطا: داده‌های تحلیل اولیه یافت نشد. لطفاً دوباره /start کنید.")
+            context.user_data.clear()
+            return
+        
+        # Run full analysis
+        try:
+            await full_analysis(
+                query.message,
+                quick_data['filepath'],
+                quick_data['instrument'],
+                quick_data['piece_name'],
+                quick_data['audio_result'],
+                quick_data['metronome_result'],
+                quick_data['user_id'],
+                quick_data['username']
+            )
+        except Exception as e:
+            logger.error(f"Full analysis failed: {e}", exc_info=True)
+            log_error(quick_data['user_id'], quick_data['username'], str(e))
+            await query.message.reply_text(f"❌ {msg.ERROR_ANALYSIS_FAILED}")
+        finally:
+            context.user_data.clear()
+
+
+async def full_analysis(message, filepath: str, instrument: str, piece_name: str,
+                       audio_result: dict, metronome_result: dict, user_id: int, username: str):
+    """Run the complete detailed analysis pipeline"""
+    from audio_processing import extract_pitch, identify_notes, segment_notes, calculate_timing_accuracy
+    from visualization import visualize_metronome_detection, visualize_pitch_and_notes
+    from video_generation import generate_video_report
+    
+    logger.info("=== FULL ANALYSIS START ===")
+    
+    stats = {
+        'duration': audio_result['duration'],
+        'num_beats': metronome_result['num_beats'],
+        'tempo': metronome_result['tempo']
+    }
+    
+    # Send metronome details
+    metronome_msg = (
+        f"🎼 مترونوم:\n"
+        f"تعداد ضربات: {metronome_result['num_beats']}\n"
+        f"تمپو: {metronome_result['tempo']:.1f} BPM"
+    )
+    await message.reply_text(metronome_msg)
+    
+    # Step 3: Extract pitch
+    logger.info("Step 3: Extracting pitch...")
+    await message.reply_text(msg.EXTRACTING_PITCH)
+    pitch_result = extract_pitch(audio_result['y'], audio_result['sr'])
+    
+    if not pitch_result['success']:
+        logger.error(f"Pitch extraction failed: {pitch_result['error']}")
+        await message.reply_text(f"❌ خطا در استخراج نت‌ها: {pitch_result['error']}")
+        return
+    
+    logger.info(f"✓ Pitch extracted")
+    
+    # Step 4: Identify notes
+    logger.info("Step 4: Identifying notes...")
+    await message.reply_text(msg.IDENTIFYING_NOTES)
+    note_result = identify_notes(pitch_result['df'])
+    
+    if not note_result['success']:
+        logger.error(f"Note identification failed: {note_result['error']}")
+        await message.reply_text(f"❌ خطا در شناسایی نت‌ها: {note_result['error']}")
+        return
+    
+    logger.info(f"✓ Notes identified")
+    stats['avg_cents_off'] = note_result['avg_cents_off']
+    stats['unique_notes'] = note_result['unique_notes']
+    
+    top_notes = sorted(note_result['note_counts'].items(), key=lambda x: x[1], reverse=True)[:5]
+    top_notes_str = "، ".join([f"{note} ({count})" for note, count in top_notes])
+    
+    note_msg = (
+        f"🎹 نت‌ها:\n"
+        f"نت‌های پرتکرار: {top_notes_str}\n"
+        f"میانگین انحراف: {note_result['avg_cents_off']:.1f} سنت"
+    )
+    await message.reply_text(note_msg)
+    
+    # Step 5: Segment notes
+    logger.info("Step 5: Segmenting notes...")
+    await message.reply_text(msg.SEGMENTING_NOTES)
+    segment_result = segment_notes(note_result['df'], audio_result['y'], audio_result['sr'])
+    
+    if not segment_result['success']:
+        logger.error(f"Segmentation failed: {segment_result['error']}")
+        await message.reply_text(f"❌ خطا در تقسیم‌بندی: {segment_result['error']}")
+        return
+    
+    logger.info(f"✓ Segmented")
+    stats['num_notes'] = segment_result['num_notes']
+    
+    # Step 6: Timing accuracy
+    logger.info("Step 6: Analyzing timing...")
+    await message.reply_text(msg.ANALYZING_TIMING)
+    timing_result = calculate_timing_accuracy(segment_result['notes'], metronome_result['beat_times'])
+    
+    if timing_result['success']:
+        logger.info(f"✓ Timing analyzed")
+        stats['avg_timing_error'] = timing_result['avg_timing_error']
+        stats['on_beat_percentage'] = timing_result['on_beat_percentage']
+        
+        timing_msg = (
+            f"⏱️ تایمینگ:\n"
+            f"خطای میانگین: {timing_result['avg_timing_error']:.1f} میلی‌ثانیه\n"
+            f"نت‌های روی ضرب: {timing_result['on_beat_percentage']:.1f}%"
+        )
+        await message.reply_text(timing_msg)
+    
+    # Step 7: Generate visualization
+    logger.info("Step 7: Generating visualization...")
+    await message.reply_text(msg.GENERATING_VISUALIZATION)
+    viz_result = visualize_pitch_and_notes(
+        segment_result['df'],
+        timing_result['notes_with_timing'] if timing_result['success'] else segment_result['notes'],
+        metronome_result['beat_times'],
+        filepath
+    )
+    
+    if viz_result['success']:
+        with open(viz_result['plot_path'], 'rb') as photo:
+            await message.reply_photo(photo=photo, caption=f"📊 گزارش تحلیل - {piece_name}")
+        logger.info("✓ Visualization sent")
+    
+    # Step 8: Generate video
+    logger.info("Step 8: Generating video...")
+    await message.reply_text(msg.GENERATING_VIDEO)
+    video_output = filepath.replace('.ogg', '_report.mp4')
+    
+    video_result = generate_video_report(
+        segment_result['df'],
+        segment_result['notes'],
+        metronome_result['beat_times'],
+        filepath,
+        video_output
+    )
+    
+    if not video_result['success']:
+        logger.error(f"Video generation failed: {video_result['error']}")
+        await message.reply_text(f"❌ خطا در ساخت ویدیو: {video_result['error']}")
+        return
+    
+    # Step 9: Upload video
+    logger.info("Step 9: Uploading video...")
+    await message.reply_text(msg.UPLOADING_VIDEO)
+    
+    file_size_mb = os.path.getsize(video_result['video_path']) / (1024 * 1024)
+    logger.info(f"Video size: {file_size_mb:.2f} MB")
+    
+    try:
+        with open(video_result['video_path'], 'rb') as video:
+            await message.reply_video(
+                video=video,
+                caption=f"🎻 گزارش ویدیویی\n🎼 {piece_name}\n⏱️ {video_result['duration']:.1f}s",
+                supports_streaming=True,
+                read_timeout=60,
+                write_timeout=120
+            )
+        logger.info("✓ Video uploaded")
+        stats['video_uploaded'] = True
+    except Exception as upload_error:
+        logger.error(f"Video upload failed: {upload_error}")
+        stats['video_uploaded'] = False
+        await message.reply_text(f"⚠️ ویدیو ساخته شد ولی آپلود ناموفق بود.")
+    
+    # Completion
+    await message.reply_text("✅ تحلیل کامل تمام شد!\n\nبا /start می‌تونی تمرین جدید بفرستی.")
+    
+    # Log completion
+    log_analysis_complete(user_id, username, stats)
+    logger.info("=== FULL ANALYSIS COMPLETE ===")
+
     
     stats = {}  # Collect stats for tracking
     
